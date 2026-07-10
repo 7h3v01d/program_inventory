@@ -16,6 +16,9 @@ Single file. One dependency. Dark-industrial GUI.
 
 ---
 
+<img width="1920" height="1040" alt="screenshot" src="https://github.com/user-attachments/assets/b453361d-a11e-4314-8142-09ecdfc65520" />
+
+
 ## Features
 
 ### Inventory
