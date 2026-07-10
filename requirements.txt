@@ -1,0 +1,4 @@
+# Program Inventory — runtime dependencies
+# Qt binding: PySide6 preferred; the app falls back to PyQt6 automatically
+# if PySide6 is not installed (pip install PyQt6 instead).
+PySide6>=6.9
