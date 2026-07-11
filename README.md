@@ -18,6 +18,9 @@ One dependency. Dark-industrial GUI. 89-test pytest suite.
 
 ---
 
+<img width="1920" height="1040" alt="screenshot" src="https://github.com/user-attachments/assets/392c689a-925a-44a6-8790-e6d9368fc934" />
+
+
 ## Features
 
 ### Inventory
