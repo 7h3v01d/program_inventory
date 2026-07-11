@@ -1,6 +1,6 @@
 # Program Inventory
 
-![Version](https://img.shields.io/badge/version-3.2.0-2fd6c3)
+![Version](https://img.shields.io/badge/version-4.0.1-2fd6c3)
 ![Python](https://img.shields.io/badge/python-3.11%2B-4be08a)
 ![Qt](https://img.shields.io/badge/Qt-PySide6%20%7C%20PyQt6-2fd6c3)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-ffb454)
@@ -12,12 +12,9 @@ SQLite history of every scan, tells you what changed between any two points
 in time, checks winget for available updates, and runs uninstalls behind a
 deny-first confirmation gate — every action logged.
 
-Single file. One dependency. Dark-industrial GUI.
+One dependency. Dark-industrial GUI. 60-test pytest suite.
 
 ---
-
-<img width="1920" height="1040" alt="screenshot" src="https://github.com/user-attachments/assets/b453361d-a11e-4314-8142-09ecdfc65520" />
-
 
 ## Features
 
@@ -67,7 +64,10 @@ Single file. One dependency. Dark-industrial GUI.
 - Silent mode is offered **only** when the vendor recorded a
   `QuietUninstallString` — no synthesised `/quiet` flags
 - The command string is passed verbatim to `CreateProcess` — no `cmd.exe`
-  shell layer
+  shell layer. If the uninstaller's manifest requires administrator rights
+  (WinError 740), the app retries through `ShellExecuteEx` with the `runas`
+  verb so Windows shows a normal UAC prompt — declining the prompt is
+  reported and logged, never retried silently
 - MSI exit codes decoded (`1602` cancelled, `1618` install in progress,
   `3010` success + reboot required)
 - Every run is logged to the actions table with its exit code; on success
@@ -84,7 +84,8 @@ Single file. One dependency. Dark-industrial GUI.
 
 ```
 pip install -r requirements.txt
-python program_inventory.py
+python program_inventory.py        # launcher script
+python -m program_inventory        # or as a module
 ```
 
 Requires **Windows 10/11** and **Python 3.11+**. PySide6 is the preferred
@@ -132,6 +133,38 @@ web searches you launch yourself.
 - MSI per-user vs per-machine duplicates are deduplicated by
   (name, version); intentional side-by-side installs of the same version
   in different hives collapse to one row
+
+## Project structure
+
+```
+program_inventory/
+├── app.py             main window, filter proxy, entry point
+├── qt_shim.py         PySide6 / PyQt6 binding shim
+├── theme.py           dark-industrial palette + stylesheet
+├── constants.py       shared constants and model roles
+├── scan.py            registry scan (HKLM 64/32, HKCU) + ScanWorker
+├── history.py         chain-hashed SQLite timeline (no Qt — importable)
+├── wingetcheck.py     winget parser, matcher, worker
+├── uninstall.py       command splitting, elevation, governed dialog
+└── dialogs.py         diff / timeline / program-history dialogs
+tests/                 pytest suite (60 tests, offscreen Qt)
+program_inventory.py   thin launcher for double-click compatibility
+```
+
+`history.py` and `wingetcheck.py` are Qt-light and importable standalone
+for reuse in other tools.
+
+## Tests
+
+```
+pip install -r requirements-dev.txt
+python -m pytest tests/
+```
+
+Covers the chain-integrity tamper matrix (name / version column / data
+blob / hash linkage), all six UninstallString shapes, the WinError 740
+elevation fallback including UAC-declined and non-740 paths, winget table
+parsing across sections, and full GUI behaviour under offscreen Qt.
 
 ## Roadmap
 

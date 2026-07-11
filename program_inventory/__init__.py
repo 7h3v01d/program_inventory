@@ -1,11 +1,7 @@
 # =============================================================================
-#  Program Inventory — launcher script
+#  Program Inventory — governed Windows installed-software scanner
 #  Copyright 2026 Leon Priest / 7h3v01d — Apache License 2.0
 # =============================================================================
 
-import sys
-
-from program_inventory.app import main
-
-if __name__ == "__main__":
-    sys.exit(main())
+__version__ = "4.0.1"
+APP_NAME = "Program Inventory"

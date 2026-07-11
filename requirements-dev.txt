@@ -1,0 +1,4 @@
+# Program Inventory — development / test dependencies
+-r requirements.txt
+pytest>=8
+ruff>=0.4
