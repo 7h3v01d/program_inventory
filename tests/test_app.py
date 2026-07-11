@@ -61,15 +61,21 @@ def test_detail_pane_content(window, rec):
     assert "UNINSTALL" in txt and "REGISTRY" in txt
 
 
+def _winget(window, rows):
+    """Drive the update controller the way the worker would."""
+    window.update_ctl._programs = window.programs
+    window.update_ctl._on_rows(rows)
+
+
 def test_updates_matching_and_toggle(window, rec):
     _scan(window, [rec("Firefox", "127.0"), rec("Stable", "1.0")])
-    window.on_updates_done([
+    _winget(window, [
         {"Name": "Firefox", "Id": "Moz.Firefox",
          "Version": "127.0", "Available": "128.0", "Source": "winget"},
         {"Name": "Unrelated", "Id": "X.Y",
          "Version": "1", "Available": "2", "Source": "winget"},
     ])
-    assert window.chip_updates.text() == "1 updates (+1 unmatched)"
+    assert window.chip_updates.text() == "1 updates (1 unmatched)"
     for r in range(window.proxy.rowCount()):
         if window.proxy.index(r, COL_NAME).data() == "Firefox":
             assert window.proxy.index(r, COL_UPD).data() == "128.0"
@@ -78,9 +84,33 @@ def test_updates_matching_and_toggle(window, rec):
     window.upd_toggle.setChecked(False)
 
 
-def test_up_to_date_chip(window, rec):
+def test_probable_match_is_marked_in_table(window, rec):
+    _scan(window, [rec("Some Very Long Application Name Here", "1.0")])
+    _winget(window, [
+        {"Name": "Some Very Long Application N\u2026", "Id": "X.Y",
+         "Version": "1.0", "Available": "2.0", "Source": "winget"},
+    ])
+    assert "probable" in window.chip_updates.text()
+    assert window.proxy.index(0, COL_UPD).data() == "2.0 ?"
+    window.table.selectRow(0)
+    assert "[probable match]" in window.detail.toPlainText()
+
+
+def test_zero_matches_is_never_reported_as_up_to_date(window, rec):
+    # Regression: winget returned updates, none matched — old code said
+    # "up to date", which is false.
     _scan(window, [rec("A", "1")])
-    window.on_updates_done([])
+    _winget(window, [
+        {"Name": "Unrelated", "Id": "X.Y",
+         "Version": "1", "Available": "2", "Source": "winget"},
+    ])
+    assert window.chip_updates.text() == "0 matched (1 unmatched)"
+    assert "up to date" not in window.chip_updates.text()
+
+
+def test_up_to_date_only_when_winget_returns_nothing(window, rec):
+    _scan(window, [rec("A", "1")])
+    _winget(window, [])
     assert window.chip_updates.text() == "up to date"
 
 
@@ -125,20 +155,62 @@ def test_startup_restore(qapp, tmp_path, rec, monkeypatch):
     w.history.close()
 
 
-def test_uninstall_done_logs_and_rescans(window, rec, monkeypatch):
+def test_uninstall_success_logs_and_rescans(window, rec, monkeypatch):
+    from program_inventory.uninstall import outcome_from_exit
     _scan(window, [rec("A", "1")])
     rescan = {}
-    monkeypatch.setattr(window, "start_scan", lambda: rescan.setdefault("hit", True))
+    monkeypatch.setattr(window, "start_scan",
+                        lambda: rescan.setdefault("hit", True))
+    window.on_uninstall_completed("A", "unins.exe", outcome_from_exit(3010))
+    assert rescan.get("hit")
+    ts, kind, cmd, code, outcome = window.history.actions_for_program("A")[0]
+    assert code == 3010 and outcome == "success"
+
+
+def test_uninstall_failed_logged_no_rescan(window, rec, monkeypatch):
+    from program_inventory.uninstall import outcome_from_exit
+    _scan(window, [rec("A", "1")])
     monkeypatch.setattr(appmod.QMessageBox, "warning",
                         staticmethod(lambda *a, **k: None))
-    window._pending_uninstall = ("A", "unins.exe")
-    window.on_uninstall_done(3010)                 # reboot-required success
-    assert rescan.get("hit")
-    assert window.history.actions_for_program("A")[0][3] == 3010
+    monkeypatch.setattr(window, "start_scan",
+                        lambda: (_ for _ in ()).throw(
+                            AssertionError("must not rescan")))
+    window.on_uninstall_completed("A", "unins.exe", outcome_from_exit(1602))
+    assert "CANCELLED" in window.chip_status.text().upper()
+    assert window.history.actions_for_program("A")[0][4] == "failed"
 
-    window._pending_uninstall = ("A", "unins.exe")
-    window.on_uninstall_done(1602)                 # cancelled
-    assert "CANCELLED" in window.chip_status.text()
+
+def test_uninstall_unknown_outcome_no_rescan(window, rec, monkeypatch):
+    # Regression: launched-but-untrackable used to log exit 0 and rescan.
+    monkeypatch.setattr(appmod.QMessageBox, "information",
+                        staticmethod(lambda *a, **k: None))
+    monkeypatch.setattr(window, "start_scan",
+                        lambda: (_ for _ in ()).throw(
+                            AssertionError("must not rescan on unknown")))
+    window.on_uninstall_completed(
+        "A", "unins.exe",
+        {"outcome": "unknown", "exit_code": None, "detail": "not observable"})
+    assert "UNKNOWN" in window.chip_status.text()
+    ts, kind, cmd, code, outcome = window.history.actions_for_program("A")[0]
+    assert code is None and outcome == "unknown"
+
+
+def test_uninstall_timeout_message_honest(window, rec, monkeypatch):
+    captured = {}
+    monkeypatch.setattr(
+        appmod.QMessageBox, "information",
+        staticmethod(lambda parent, title, text: captured.setdefault(
+            "text", text)))
+    monkeypatch.setattr(window, "start_scan",
+                        lambda: (_ for _ in ()).throw(
+                            AssertionError("must not rescan on timeout")))
+    window.on_uninstall_completed(
+        "A", "unins.exe",
+        {"outcome": "timeout", "exit_code": None,
+         "detail": "Stopped waiting after 15 minutes — the uninstaller"
+                   " may still be running. Rescan once it finishes."})
+    assert "may still be running" in captured["text"]
+    assert "MAY STILL BE" in window.chip_status.text()
 
 
 def test_program_history_dialog_includes_actions(window, rec, qapp):

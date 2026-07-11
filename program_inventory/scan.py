@@ -6,6 +6,7 @@
 import datetime
 
 from .constants import IS_WINDOWS, NOISE_TERMS
+from .diffengine import make_entry_id
 from .qt_shim import QThread, Signal
 
 if IS_WINDOWS:
@@ -71,6 +72,8 @@ def scan_installed_programs() -> list[dict]:
                             size_mb = None
 
                         programs.append({
+                            "EntryId": make_entry_id(hive_name, arch, sub_name),
+                            "KeyName": sub_name,
                             "Name": name,
                             "Version": str(gv("DisplayVersion")).strip(),
                             "Publisher": str(gv("Publisher")).strip(),
@@ -88,16 +91,11 @@ def scan_installed_programs() -> list[dict]:
                 except OSError:
                     continue
 
-    # Dedupe by (name, version) — HKLM 64 wins over 32 wins over HKCU (scan order).
-    seen: set[tuple] = set()
-    unique = []
-    for p in programs:
-        key = (p["Name"].lower(), p["Version"])
-        if key not in seen:
-            seen.add(key)
-            unique.append(p)
-    unique.sort(key=lambda p: p["Name"].lower())
-    return unique
+    # No display-name deduplication: every registry entry is a distinct
+    # installation record with its own EntryId. Per-user vs per-machine and
+    # 32/64-bit siblings are real, separate entries and are shown as such.
+    programs.sort(key=lambda p: (p["Name"].lower(), p["Arch"]))
+    return programs
 
 
 

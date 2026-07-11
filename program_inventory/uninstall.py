@@ -22,6 +22,25 @@ MSI_EXIT = {
 ERROR_ELEVATION_REQUIRED = 740
 ERROR_CANCELLED = 1223          # user declined the UAC prompt
 
+# Uninstall outcomes — a governed tool reports what it OBSERVED, never what
+# it hopes happened. 'unknown' and 'timeout' are first-class states.
+OUTCOME_SUCCESS = "success"     # observed a success exit code
+OUTCOME_FAILED = "failed"       # observed a failure exit code
+OUTCOME_DECLINED = "declined"   # UAC prompt declined — nothing ran
+OUTCOME_TIMEOUT = "timeout"     # stopped waiting; process may still run
+OUTCOME_UNKNOWN = "unknown"     # launched, but outcome was not observable
+OUTCOME_ERROR = "error"         # could not launch at all
+
+TIMEOUT_DETAIL = ("Stopped waiting after {mins} minutes — the uninstaller"
+                  " may still be running. Rescan once it finishes.")
+UNKNOWN_DETAIL = ("The elevated uninstaller launched, but Windows returned"
+                  " no process handle — the outcome was not observable."
+                  " Rescan to confirm the result.")
+
+
+class LaunchedUnknown(Exception):
+    """Elevated process launched but no handle came back to track it."""
+
 
 def split_command_line(cmd: str) -> tuple[str, str]:
     """Split a registry UninstallString into (executable, parameters).
@@ -98,8 +117,9 @@ def run_elevated(exe: str, params: str, timeout_s: int) -> int:
         raise OSError(f"ShellExecuteEx failed (Win32 error {err}).")
 
     if not sei.hProcess:
-        # Process launched but no handle returned — cannot track exit code.
-        return 0
+        # Launched but untrackable. This is NOT success — the caller must
+        # report an unknown outcome, not exit code 0.
+        raise LaunchedUnknown(UNKNOWN_DETAIL)
     try:
         if kernel32.WaitForSingleObject(
                 sei.hProcess, timeout_s * 1000) == WAIT_TIMEOUT:
@@ -111,12 +131,22 @@ def run_elevated(exe: str, params: str, timeout_s: int) -> int:
         kernel32.CloseHandle(sei.hProcess)
 
 
+def _result(outcome: str, exit_code: int | None, detail: str) -> dict:
+    return {"outcome": outcome, "exit_code": exit_code, "detail": detail}
+
+
+def outcome_from_exit(code: int) -> dict:
+    meaning, ok = MSI_EXIT.get(code, (f"exit code {code}", code == 0))
+    return _result(OUTCOME_SUCCESS if ok else OUTCOME_FAILED, code, meaning)
+
+
 class UninstallWorker(QThread):
     """Runs a registry UninstallString. Tries CreateProcess first (no shell
     layer); if the target's manifest requires admin (WinError 740), retries
-    through ShellExecuteEx 'runas' so Windows shows the UAC prompt."""
-    finished_code = Signal(int)
-    failed = Signal(str)
+    through ShellExecuteEx 'runas' so Windows shows the UAC prompt. Emits a
+    single `completed` result dict: {outcome, exit_code, detail} — outcome
+    is one of the OUTCOME_* states, never an optimistic guess."""
+    completed = Signal(dict)
 
     TIMEOUT_S = 900
 
@@ -126,33 +156,39 @@ class UninstallWorker(QThread):
         self.silent = silent
 
     def run(self):
+        self.completed.emit(self._execute())
+
+    def _execute(self) -> dict:
+        mins = self.TIMEOUT_S // 60
         try:
             proc = subprocess.run(
                 self.command, timeout=self.TIMEOUT_S,
                 creationflags=(0x08000000 if self.silent else 0),
             )
-            self.finished_code.emit(proc.returncode)
-            return
+            return outcome_from_exit(proc.returncode)
         except subprocess.TimeoutExpired:
-            self.failed.emit("Uninstaller timed out after 15 minutes.")
-            return
+            return _result(OUTCOME_TIMEOUT, None,
+                           TIMEOUT_DETAIL.format(mins=mins))
         except OSError as exc:
             if getattr(exc, "winerror", None) != ERROR_ELEVATION_REQUIRED:
-                self.failed.emit(str(exc))
-                return
+                return _result(OUTCOME_ERROR, None, str(exc))
             # fall through to elevated retry
         except ValueError as exc:
-            self.failed.emit(str(exc))
-            return
+            return _result(OUTCOME_ERROR, None, str(exc))
 
         # --- elevation required: ShellExecuteEx 'runas' -------------------
         try:
             exe, params = split_command_line(self.command)
-            self.finished_code.emit(run_elevated(exe, params, self.TIMEOUT_S))
-        except PermissionError as exc:      # UAC declined
-            self.failed.emit(str(exc))
-        except (TimeoutError, OSError) as exc:
-            self.failed.emit(str(exc))
+            return outcome_from_exit(run_elevated(exe, params, self.TIMEOUT_S))
+        except PermissionError as exc:      # UAC declined — nothing ran
+            return _result(OUTCOME_DECLINED, None, str(exc))
+        except LaunchedUnknown as exc:
+            return _result(OUTCOME_UNKNOWN, None, str(exc))
+        except TimeoutError:
+            return _result(OUTCOME_TIMEOUT, None,
+                           TIMEOUT_DETAIL.format(mins=mins))
+        except OSError as exc:
+            return _result(OUTCOME_ERROR, None, str(exc))
 
 
 class UninstallDialog(QDialog):

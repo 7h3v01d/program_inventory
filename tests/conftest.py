@@ -32,14 +32,19 @@ def store(tmp_path):
 
 @pytest.fixture
 def rec():
-    def make(name, ver, quiet="", **kw):
+    from program_inventory.diffengine import make_entry_id
+
+    def make(name, ver, quiet="", key=None, **kw):
+        key = key or name                    # registry subkey defaults to name
         base = {
+            "EntryId": make_entry_id("HKLM", "64-bit", key),
+            "KeyName": key,
             "Name": name, "Version": ver, "Publisher": "Acme",
             "InstallDate": "2026-06-01", "SizeMB": 10.0, "Arch": "64-bit",
             "Source": "HKLM", "InstallLocation": "",
             "UninstallString": "C:\\x\\unins.exe",
             "QuietUninstallString": quiet, "URLInfoAbout": "",
-            "RegistryPath": "HKLM\\..\\x",
+            "RegistryPath": "HKLM\\SOFTWARE\\...\\Uninstall\\" + key,
         }
         base.update(kw)
         return base

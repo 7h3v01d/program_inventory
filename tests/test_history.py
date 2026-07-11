@@ -14,9 +14,11 @@ def test_second_scan_diffs_against_first(store, rec):
     store.save_scan([rec("A", "1"), rec("B", "2")])
     r = store.save_scan([rec("A", "2"), rec("C", "1")])
     assert not r["baseline"]
-    assert r["added"] == ["C"]
-    assert r["removed"] == ["B"]
-    assert r["changed"] == [("A", "1", "2")]
+    assert [p["Name"] for p in r["added"]] == ["C"]
+    assert [p["Name"] for p in r["removed"]] == ["B"]
+    assert [(o["Name"], o["Version"], n["Version"])
+            for o, n in r["changed"]] == [("A", "1", "2")]
+    assert r["modified"] == []
 
 
 def test_latest_scan_roundtrip(store, rec):

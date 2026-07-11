@@ -3,6 +3,7 @@
 #  Copyright 2026 Leon Priest / 7h3v01d — Apache License 2.0
 # =============================================================================
 
+from .diffengine import diff_scans, format_diff_report
 from .history import HistoryStore
 from .qt_shim import (Qt, QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                       QPushButton, QPlainTextEdit, QTableView,
@@ -46,7 +47,7 @@ class TimelineDialog(QDialog):
 
         self.model = QStandardItemModel(0, 7)
         self.model.setHorizontalHeaderLabels(
-            ["#", "Timestamp", "Host", "Programs", "+ / − / ~", "Hash", ""])
+            ["#", "Timestamp", "Host", "Programs", "+ / − / ~ / ±", "Hash", ""])
         self.table = QTableView()
         self.table.setModel(self.model)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -57,11 +58,11 @@ class TimelineDialog(QDialog):
         lay.addWidget(self.table, stretch=1)
 
         self._scan_ids: list[int] = []
-        for sid, ts, host, count, a, r, c, h in store.scans():
+        for sid, ts, host, count, a, r, c, m, h in store.scans():
             self._scan_ids.append(sid)
             row = [QStandardItem(str(x)) for x in
-                   (sid, ts, host or "—", count, f"+{a} / -{r} / ~{c}",
-                    h[:16] + "…", "")]
+                   (sid, ts, host or "—", count,
+                    f"+{a} / -{r} / ~{c} / ±{m}", h[:16] + "…", "")]
             for it in row:
                 it.setEditable(False)
             self.model.appendRow(row)
@@ -91,23 +92,9 @@ class TimelineDialog(QDialog):
         sid = self._selected_scan_id()
         if sid is None:
             return
-        old_entries = self.store.entries_for(sid)
-        old = {p["Name"]: p.get("Version", "") for p in old_entries}
-        new = {p["Name"]: p.get("Version", "") for p in self.current}
-        added = sorted(set(new) - set(old), key=str.lower)
-        removed = sorted(set(old) - set(new), key=str.lower)
-        changed = sorted((n for n in set(new) & set(old) if new[n] != old[n]),
-                         key=str.lower)
-        lines = [f"Scan #{sid} -> current table", ""]
-        lines.append(f"[+] ADDED ({len(added)})")
-        lines += [f"    + {n}  {new[n]}" for n in added] or ["    (none)"]
-        lines.append("")
-        lines.append(f"[-] REMOVED ({len(removed)})")
-        lines += [f"    - {n}  {old[n]}" for n in removed] or ["    (none)"]
-        lines.append("")
-        lines.append(f"[~] VERSION CHANGED ({len(changed)})")
-        lines += [f"    ~ {n}  {old[n]}  ->  {new[n]}" for n in changed] or ["    (none)"]
-        DiffDialog("\n".join(lines), self).exec()
+        diff = diff_scans(self.store.entries_for(sid), self.current)
+        DiffDialog(format_diff_report(
+            diff, [f"Scan #{sid} -> current table"]), self).exec()
 
     def load_selected(self):
         sid = self._selected_scan_id()
@@ -141,15 +128,18 @@ class ProgramHistoryDialog(QDialog):
                     lines.append(f"{ts}  [+] installed  {new or ''}")
                 elif kind == "removed":
                     lines.append(f"{ts}  [-] removed    (was {old or '?'})")
-                else:
+                elif kind == "changed":
                     lines.append(f"{ts}  [~] upgraded   {old or '?'}  ->  {new or '?'}")
+                else:
+                    lines.append(f"{ts}  [±] metadata modified  (v{new or '?'})")
         actions = store.actions_for_program(name)
         if actions:
             lines.append("")
             lines.append("Logged actions:")
-            for ts, kind, cmd, code in actions:
-                code_txt = "did not run" if code is None else f"exit {code}"
-                lines.append(f"{ts}  [!] {kind} ({code_txt})  {cmd or ''}")
+            for ts, kind, cmd, code, outcome in actions:
+                code_txt = f"exit {code}" if code is not None else "no exit code"
+                lines.append(
+                    f"{ts}  [!] {kind}: {outcome or '?'} ({code_txt})  {cmd or ''}")
         text = QPlainTextEdit()
         text.setReadOnly(True)
         text.setPlainText("\n".join(lines))

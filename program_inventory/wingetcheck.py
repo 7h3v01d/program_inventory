@@ -55,12 +55,15 @@ def parse_winget_upgrade(output: str) -> list[dict]:
     return rows
 
 
-def match_winget_row(registry_name: str, winget_name: str) -> bool:
-    """winget truncates long names/ids with '…' — prefix-match those."""
+def match_winget_row(registry_name: str, winget_name: str) -> str | None:
+    """Confidence-graded match. 'exact' = full case-insensitive name match;
+    'probable' = prefix match against a winget-truncated ('…') name; None =
+    no match. Callers must surface the difference — probable matches are a
+    heuristic, not an identification."""
     rn, wn = registry_name.lower(), winget_name.lower()
     if wn.endswith(WINGET_ELLIPSIS):
-        return rn.startswith(wn[:-1])
-    return rn == wn
+        return "probable" if rn.startswith(wn[:-1]) else None
+    return "exact" if rn == wn else None
 
 
 def winget_upgrade_command(update: dict) -> str:
