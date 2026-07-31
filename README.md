@@ -14,6 +14,8 @@ in time, checks winget for available updates with graded match confidence,
 and runs uninstalls behind a deny-first confirmation gate — every action
 logged with the outcome that was actually observed.
 
+<img width="1920" height="1040" alt="screenshot" src="https://github.com/user-attachments/assets/729f30de-aa93-4589-a008-a770373e2a22" />
+
 One dependency. Dark-industrial GUI. 89-test pytest suite.
 
 ---
