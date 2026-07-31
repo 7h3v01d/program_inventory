@@ -75,7 +75,14 @@ class HistoryStore:
 
     def _open(self) -> sqlite3.Connection:
         con = sqlite3.connect(str(self.path))
-        con.execute("PRAGMA journal_mode=WAL")
+        try:
+            con.execute("PRAGMA journal_mode=WAL")
+        except sqlite3.DatabaseError:
+            # Release the OS file handle before the caller tries to rename
+            # this file aside — on Windows a rename fails while any handle
+            # to the file is still open.
+            con.close()
+            raise
         version = con.execute("PRAGMA user_version").fetchone()[0]
         has_scans = con.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='scans'"
